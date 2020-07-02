@@ -21,8 +21,8 @@ class Vrp:
                                    'Distance from Previous': [0], 'Driving Time from Previous': [0],
                                    'Total Distance (km)': [0]})
         self.tabu_list = []
-        #self.temp_route = pd.DataFrame()
-        #self.swap_stores = None
+        self.swap_stores = None
+        # self.temp_route = pd.DataFrame()
 
     def distance_matrix(self):
         for i in self.data['City Nr.']:
@@ -35,7 +35,7 @@ class Vrp:
         visit_times[0] = np.nan
         self.data['Visit Time'] = visit_times
 
-    def check_constraints(self, other_route=None):
+    def check_constraints(self, other_route=None, route_number=None):
         """
         We check two constraints. John cannot work more than 11 hours (660 minutes) and John should finish each visit
         before the closing time of the store (and after the opening time). It is assumed that John is always present at
@@ -53,7 +53,7 @@ class Vrp:
             if minutes_worked > self.max_worked_minutes:
                 return False
             # We skip the driving time from hq to first store, since this can be done before 9 am.
-            time_after_visit = 540 + total_visit_times + total_driving_time - self.route['Driving Time from Previous'][1]
+            time_after_visit = 540 + total_visit_times + total_driving_time - current_route['Driving Time from Previous'][1]
             if time_after_visit > self.closing_time:
                 return False
             return True
@@ -67,7 +67,9 @@ class Vrp:
             if minutes_worked > self.max_worked_minutes:
                 return False
             # We skip the driving time from hq to first store, since this can be done before 9 am.
-            time_after_visit = 540 + total_visit_times + total_driving_time - self.route['Driving Time from Previous'][1]
+            current_route_indexes = list(current_route.index.values)
+            time_after_visit = 540 + total_visit_times + total_driving_time - \
+                               current_route['Driving Time from Previous'][current_route_indexes[1]]
             if time_after_visit > self.closing_time:
                 return False
             return True
@@ -150,16 +152,16 @@ class Vrp:
         """
         Selects two random stores and swaps them
         """
-        swap_stores = [random.randint(1, 133), random.randint(1, 133)]  # Includes the last number
-        if swap_stores in self.tabu_list:  # Check if the stores to be swapped are in the Tabu list
+        self.swap_stores = [random.randint(1, 133), random.randint(1, 133)]  # Includes the last number
+        if self.swap_stores in self.tabu_list:  # Check if the stores to be swapped are in the Tabu list
             return False
-        swap_stores.reverse()
-        if swap_stores in self.tabu_list:  # And check the reverse order
+        self.swap_stores.reverse()
+        if self.swap_stores in self.tabu_list:  # And check the reverse order
             return False
-        swap_stores.reverse()  # Back to original
+        self.swap_stores.reverse()  # Back to original
         # Extract the stores and their indexes
-        s1_index = temp_route.index[temp_route['City Nr.'] == swap_stores[0]][0]  # Index of store 1
-        s2_index = temp_route.index[temp_route['City Nr.'] == swap_stores[1]][0]  # Index of store 2
+        s1_index = temp_route.index[temp_route['City Nr.'] == self.swap_stores[0]][0]  # Index of store 1
+        s2_index = temp_route.index[temp_route['City Nr.'] == self.swap_stores[1]][0]  # Index of store 2
         s1 = pd.DataFrame(dict(temp_route.iloc[s1_index]), index=[s2_index])  # Create dataframe of store with opposite index
         s2 = pd.DataFrame(dict(temp_route.iloc[s2_index]), index=[s1_index])
         s1_route_nr = int(s1['Route Nr.'])  # We switch the route number so its easier to slice the data later
@@ -231,11 +233,14 @@ class Vrp:
         # Update route one and two
         new_route_1, index_range_1 = self.update_route_part(temp_route, r_n_1, idx_1)
         new_route_2, index_range_2 = self.update_route_part(temp_route, r_n_2, idx_2)
-        # Check constraints of both.
-        # update self.temp_route with the two new routes
-        #return temp_route, new_route_1, index_range_1, new_route_2, index_range_2
         temp_route = self.update_route(temp_route, new_route_1, new_route_2, index_range_1, index_range_2)
-        return temp_route
+        # Check constraints for the two new routes
+        # if not self.check_constraints(temp_route, r_n_1):
+        #     print('Constraints not met - breaking')
+        # elif not self.check_constraints(new_route_2, r_n_2):
+        #     print('Constraints not met - breaking')
+        # update self.temp_route with the two new routes
+        return temp_route, new_route_1, new_route_2, r_n_1, r_n_2
 
         #     best_solution = None # Fill will routes
         #     best_distance = total_distance_in_best_solution
@@ -272,8 +277,32 @@ print(f"Total amount of days needed: {john.route_nr}")
 original_route = john.route.copy(deep=True)
 
 #%%
-temp_route = john.tabu_search()
+temp_routee, route_1, route_2, route_number_1, route_number_2 = john.tabu_search()
+
+#%%
 
 
+def constraints_temp(other_route, route_number):
+    current_route = other_route[other_route['Route Nr.'] == route_number]  # Subset of current route
+    print(current_route)
+    total_driving_time = current_route['Driving Time from Previous'].sum()  # In minutes
+    total_visit_times = current_route['Visit Time'].sum()
+    # TODO: self.max_worked_minutes
+    max_worked_minutes = 660
+    if (total_driving_time + total_visit_times) > max_worked_minutes:
+        return False
+    # # We skip the driving time from hq to first store, since this can be done before 9 am.
+    route_indexes = list(other_route.index.values)  # TODO: take the indexes from here
 
 
+    # TODO: finish this function then add to tabu_search
+
+
+    # time_after_visit = 540 + total_visit_times + total_driving_time - current_route['Driving Time from Previous'][1] - other_route['Driving Time from Previous'][len(other_route)-1]
+    # if time_after_visit > self.closing_time:
+    #     return False
+    # return True
+    return current_route
+
+
+temp = constraints_temp(temp_routee, route_number_1)

@@ -47,7 +47,9 @@ class Vrp:
         if minutes_worked > self.max_worked_minutes:
             return False
         # We skip the driving time from hq to first store, since this can be done before 9 am.
-        time_after_visit = 540 + total_visit_times + total_driving_time - self.route['Driving Time from Previous'][1]
+        current_route_indexes = list(current_route.index.values)
+        time_after_visit = 540 + total_visit_times + total_driving_time - \
+                           current_route['Driving Time from Previous'][current_route_indexes[1]]
         if time_after_visit > self.closing_time:
             return False
         return True
