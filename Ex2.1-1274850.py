@@ -4,14 +4,10 @@ import pandas as pd
 import xlrd
 import xlwt
 
-# %%
 # Loading the data
 data = pd.read_excel('Data Excercise 2 - EMTE stores - BA 2020-1.xlsx')
 
-# The rounding is a bit ambiguous. Do I round after adding each distance?
 
-
-# %%
 class Vrp:
     def __init__(self, data_frame):
         self.data = data_frame
@@ -26,8 +22,8 @@ class Vrp:
 
     def distance_matrix(self):
         for i in self.data['City Nr.']:
-            dist_list = [haversine((self.data['Lat'][i], self.data['Long'][i]),
-                                   (self.data['Lat'][j], self.data['Long'][j])) for j in self.data['City Nr.']]
+            dist_list = [round(haversine((self.data['Lat'][i], self.data['Long'][i]),
+                                         (self.data['Lat'][j], self.data['Long'][j])), 0) for j in self.data['City Nr.']]
             self.dm[i] = dist_list
 
     def add_visit_times(self):
@@ -46,7 +42,7 @@ class Vrp:
         total_driving_time = current_route['Driving Time from Previous'].sum()  # In minutes
         total_visit_times = current_route['Visit Time'].sum()
         current_store = current_route['City Nr.'][len(self.route)-1]
-        driving_time_back = self.dm[current_store][0] / 1.5
+        driving_time_back = round(self.dm[current_store][0] / 1.5, 0)  # TODO: changed this - added round
         minutes_worked = total_driving_time + total_visit_times + driving_time_back
         if minutes_worked > self.max_worked_minutes:
             return False
@@ -67,14 +63,13 @@ class Vrp:
             if len(dist) == 0:  # If after dropping HQ dist is empty, we have reached the last store and should break
                 new_last_store = self.route['City Nr.'][len(self.route) - 1]
                 distance_to_hq = self.dm[new_last_store][0]  # Distance from last visited store to hq
-                total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] \
-                                       + round(distance_to_hq, 0)
-                total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + round(distance_to_hq, 0)
+                total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] + distance_to_hq
+                total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + distance_to_hq
                 self.route = self.route.append({'Route Nr.': self.route_nr, 'City Nr.': 0,
                                                 'City Name': 'EMTE HEADQUARTERS VEGHEL',
                                                 'Total Distance in Route (km)': total_route_distance,
                                                 'Visit Time': np.nan,
-                                                'Distance from Previous': round(distance_to_hq, 0),
+                                                'Distance from Previous': distance_to_hq,
                                                 'Driving Time from Previous': round((distance_to_hq / 1.5), 0),
                                                 'Total Distance (km)': total_distance},
                                                ignore_index=True)  # Add hq to route
@@ -82,33 +77,30 @@ class Vrp:
             shortest_distance = dist.min()
             closest_store = dist.idxmin()  # Returns index (store) of lowest distance
             store_name = self.data['Name'][closest_store]  # Retrieve name of store from data frame
-            total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] \
-                                   + round(shortest_distance, 0)
-            total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + round(shortest_distance, 0)
+            total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] + shortest_distance
+            total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + shortest_distance
             self.route = self.route.append({'Route Nr.': self.route_nr, 'City Nr.': closest_store,
                                             'City Name': store_name,
                                             'Total Distance in Route (km)': total_route_distance,
                                             'Visit Time': self.data['Visit Time'][closest_store],
-                                            'Distance from Previous': round(shortest_distance, 0),
+                                            'Distance from Previous': shortest_distance,
                                             'Driving Time from Previous': round((shortest_distance / 1.5), 0),
                                             'Total Distance (km)': total_distance},
                                            ignore_index=True)
             if self.check_constraints():  # Accept the new route and continue
-                # print("constraints are met")
                 self.dm.drop(closest_store, inplace=True)  # remove the closest store from the distance matrix
                 current_store = closest_store  # Change the current store for next iteration
             else:
                 self.route.drop(len(self.route) - 1, inplace=True)  # Drop the last store
                 new_last_store = self.route['City Nr.'][len(self.route) - 1]
                 distance_to_hq = self.dm[new_last_store][0]  # Distance from last visited store to hq
-                total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] \
-                                       + round(distance_to_hq, 0)
-                total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + round(distance_to_hq, 0)
+                total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] + distance_to_hq
+                total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + distance_to_hq
                 self.route = self.route.append({'Route Nr.': self.route_nr, 'City Nr.': 0,
                                                 'City Name': 'EMTE HEADQUARTERS VEGHEL',
                                                 'Total Distance in Route (km)': total_route_distance,
                                                 'Visit Time': np.nan,
-                                                'Distance from Previous': round(distance_to_hq, 0),
+                                                'Distance from Previous': distance_to_hq,
                                                 'Driving Time from Previous': round((distance_to_hq / 1.5), 0),
                                                 'Total Distance (km)': total_distance},
                                                ignore_index=True)  # Add hq to route
@@ -127,15 +119,18 @@ class Vrp:
                                                     self.route['Total Distance (km)'][len(self.route) - 1]},
                                                ignore_index=True)
             if not self.one_route():
-                self.route.drop(['Visit Time', 'Distance from Previous', 'Driving Time from Previous'],
-                                axis=1, inplace=True)  # Drop unnecessary columns
                 break
+
+    def output_route(self):
+        output_df = self.route.copy(deep=True)
+        output_df.drop(['Visit Time', 'Distance from Previous', 'Driving Time from Previous'], axis=1, inplace=True)
+        return output_df
 
 
 john = Vrp(data_frame=data)  # Initialize object
 john.distance_matrix()  # Create distance matrix
 john.add_visit_times()  # Add the visit times for each store to original data
 john.all_routes()  # Plan the routes
-john.route.to_excel("Ex2.1-1274850.xls")  # Save as excel file
-
+output = john.output_route()
+output.to_excel("Ex2.1-1274850.xls", index=False)  # Save as excel file
 print(f"Total amount of days needed: {john.route_nr}")
