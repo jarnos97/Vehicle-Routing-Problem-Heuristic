@@ -4,6 +4,8 @@ import pandas as pd
 import random
 import xlrd
 import xlwt
+import math
+import time
 
 # Loading the data
 data = pd.read_excel('Data Excercise 2 - EMTE stores - BA 2020-1.xlsx')
@@ -22,6 +24,10 @@ class Vrp:
                                    'Total Distance (km)': [0]})
         self.tabu_list = []
         self.swap_stores = None
+        self.best_solution = None
+        self.best_distance = math.inf  # So that the first new distance is always smaller
+        self.no_improvement_counter = 0
+        self.previous_total_distance = math.inf
         # self.temp_route = pd.DataFrame()
 
     def distance_matrix(self):
@@ -42,19 +48,17 @@ class Vrp:
         the first store at 9 am (540 minutes after midnight).
         :return: True/False
         """
-        if other_route:  # This is used for the tabu search
-            print('should not be used')
-            current_route = self.route[self.route['Route Nr.'] == self.route_nr]  # Subset of current route
+        if route_number:  # This is used for the tabu search
+            current_route = other_route[other_route['Route Nr.'] == route_number]  # Subset of current route
             total_driving_time = current_route['Driving Time from Previous'].sum()  # In minutes
             total_visit_times = current_route['Visit Time'].sum()
-            current_store = current_route['City Nr.'][len(self.route) - 1]
-            driving_time_back = round(self.dm[current_store][0] / 1.5, 0)  # TODO: changed this - added round
-            minutes_worked = total_driving_time + total_visit_times + driving_time_back
-            if minutes_worked > self.max_worked_minutes:
+            if (total_driving_time + total_visit_times) > self.max_worked_minutes:  # Constraint 1: time worked
                 return False
-            # We skip the driving time from hq to first store, since this can be done before 9 am.
-            time_after_visit = 540 + total_visit_times + total_driving_time - current_route['Driving Time from Previous'][1]
-            if time_after_visit > self.closing_time:
+            route_indexes = list(current_route.index.values)
+            time_after_visit = 540 + total_visit_times + total_driving_time - \
+                               current_route['Driving Time from Previous'][route_indexes[1]] - \
+                               current_route['Driving Time from Previous'][len(current_route)-1]  # Way back
+            if time_after_visit > self.closing_time:  # Constraint 2: visiting time
                 return False
             return True
         else:
@@ -62,15 +66,14 @@ class Vrp:
             total_driving_time = current_route['Driving Time from Previous'].sum()  # In minutes
             total_visit_times = current_route['Visit Time'].sum()
             current_store = current_route['City Nr.'][len(self.route)-1]
-            driving_time_back = round(self.dm[current_store][0] / 1.5, 0)  # TODO: changed this - added round
+            driving_time_back = round(self.dm[current_store][0] / 1.5, 0)
             minutes_worked = total_driving_time + total_visit_times + driving_time_back
-            if minutes_worked > self.max_worked_minutes:
+            if minutes_worked > self.max_worked_minutes:  # Constraint 1: time worked
                 return False
-            # We skip the driving time from hq to first store, since this can be done before 9 am.
             current_route_indexes = list(current_route.index.values)
             time_after_visit = 540 + total_visit_times + total_driving_time - \
                                current_route['Driving Time from Previous'][current_route_indexes[1]]
-            if time_after_visit > self.closing_time:
+            if time_after_visit > self.closing_time:  # Constraint 2: visiting time
                 return False
             return True
 
@@ -98,11 +101,10 @@ class Vrp:
                 return False
             shortest_distance = dist.min()
             closest_store = dist.idxmin()  # Returns index (store) of lowest distance
-            store_name = self.data['Name'][closest_store]  # Retrieve name of store from data frame  # TODO: place in append
             total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] + shortest_distance
             total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + shortest_distance
             self.route = self.route.append({'Route Nr.': self.route_nr, 'City Nr.': closest_store,
-                                            'City Name': store_name,
+                                            'City Name': self.data['Name'][closest_store],
                                             'Total Distance in Route (km)': total_route_distance,
                                             'Visit Time': self.data['Visit Time'][closest_store],
                                             'Distance from Previous': shortest_distance,
@@ -143,8 +145,11 @@ class Vrp:
             if not self.one_route():
                 break
 
-    def output_route(self):
-        output_df = self.route.copy(deep=True)
+    def output_route(self, manual_route=None):
+        if manual_route is not None:
+            output_df = manual_route.copy(deep=True)
+        else:
+            output_df = self.route.copy(deep=True)
         output_df.drop(['Visit Time', 'Distance from Previous', 'Driving Time from Previous'], axis=1, inplace=True)
         return output_df
 
@@ -152,13 +157,7 @@ class Vrp:
         """
         Selects two random stores and swaps them
         """
-        self.swap_stores = [random.randint(1, 133), random.randint(1, 133)]  # Includes the last number
-        if self.swap_stores in self.tabu_list:  # Check if the stores to be swapped are in the Tabu list
-            return False
-        self.swap_stores.reverse()
-        if self.swap_stores in self.tabu_list:  # And check the reverse order
-            return False
-        self.swap_stores.reverse()  # Back to original
+        self.swap_stores = list(np.random.choice(range(1, 134), 2, replace=False))  # Includes the last number
         # Extract the stores and their indexes
         s1_index = temp_route.index[temp_route['City Nr.'] == self.swap_stores[0]][0]  # Index of store 1
         s2_index = temp_route.index[temp_route['City Nr.'] == self.swap_stores[1]][0]  # Index of store 2
@@ -179,8 +178,8 @@ class Vrp:
         """
         Takes the adapted route, from swap() and updates the distances in the altered route numbers.x
         xx
-        This approach is not very elegant in code (many lines), yet is computationally much more efficient than looping over
-        the data frame and updating it.
+        This approach is not very elegant in code (many lines), yet is computationally much more efficient than looping
+        over the data frame and updating it.
         """
         route_index_range = temp_route.index[temp_route['Route Nr.'] == route_nr_1]  # All indexes of store 1
         r1_begin, r1_end = s1_index, route_index_range[len(route_index_range) - 1]  # Alter these indexes
@@ -220,52 +219,83 @@ class Vrp:
         temp_route = temp_route.append(new_route_1, ignore_index=False)  # Append new rows
         temp_route.sort_index(inplace=True)  # Place rows at correct index
         # Update the total distance for the whole route
-        # TODO: update total distance + add self.swap_stores to tabu_list
+        previous_distances = temp_route['Distance from Previous'].to_list()
+        total_distances = []
+        total = 0
+        for i in previous_distances:
+            total += i
+            total_distances.append(total)
+        temp_route['Total Distance (km)'] = total_distances
         return temp_route
 
     def tabu_search(self):  # Eventually take out manual_route
-        # start_timer = 0
+        """
+        Note: I implemented the extra condition that a swap is not applied if the total distance is more than 20 km
+        worse than the previous total distance (as mentioned in the discussion).
+        """
+        # Initialize variables
+        start_time = time.perf_counter()
         self.dm = pd.DataFrame()  # Distance matrix
         self.distance_matrix()  # Re-initiate the distance matrix
-        # Perform one swap
-        temp_route = self.route.copy(deep=True)  # Makes copy of current route object
-        temp_route, r_n_1, r_n_2, idx_1, idx_2 = self.swap(temp_route)
-        # Update route one and two
-        new_route_1, index_range_1 = self.update_route_part(temp_route, r_n_1, idx_1)
-        new_route_2, index_range_2 = self.update_route_part(temp_route, r_n_2, idx_2)
-        temp_route = self.update_route(temp_route, new_route_1, new_route_2, index_range_1, index_range_2)
-        # Check constraints for the two new routes
-        # if not self.check_constraints(temp_route, r_n_1):
-        #     print('Constraints not met - breaking')
-        # elif not self.check_constraints(new_route_2, r_n_2):
-        #     print('Constraints not met - breaking')
-        # update self.temp_route with the two new routes
-        return temp_route, new_route_1, new_route_2, r_n_1, r_n_2
 
-        #     best_solution = None # Fill will routes
-        #     best_distance = total_distance_in_best_solution
-        #     no_imporovement_counter = 0
-        #
-        #     # while True: Loop starts here
-        #     current_total_distance = self.route['Total Distance in Route (km)'][len(self.route)-1]
-        #     select_two_random_stores = 0  # (can never be hq)
-        #         print('select new ones')# break
-        #
-        #     temp_route = ()
-        #     update_the_distances_in_both_routes = 0
-        #     self.check_constraints() for both routes_that_changed
-        #     if not check_constraints():
-        #         return continue to next
-        #     new_total distinance
-        #     if new_total_distance >= current_total_distance: # (no improvement)
-        #         no_improvement_counter += 1
-        #     else:
-        #         no_improvement_counter = 0
-        #     if no_improvement_count == 100 or timer > 1000 seconds:
-        #         breakpoint
-        #     self.tabu_list.append(swap)
-        #     if len(self.tabu_list > 50):
-        #         self.tabu_list.pop(0)
+        while True:
+            print(f"No improvement counter: {self.no_improvement_counter}")
+
+            # Apply swap and update route
+            temp_route = self.route.copy(deep=True)  # Makes copy of current route object
+            temp_route, r_n_1, r_n_2, idx_1, idx_2 = self.swap(temp_route)  # Perform one swap
+            new_route_1, index_range_1 = self.update_route_part(temp_route, r_n_1, idx_1)  # Update route one and two
+            new_route_2, index_range_2 = self.update_route_part(temp_route, r_n_2, idx_2)
+            temp_route = self.update_route(temp_route, new_route_1, new_route_2, index_range_1, index_range_2)
+
+            # Checking the requirements for a swap: constraints, improvement, tabu_list, no improvement counter
+            if not self.check_constraints(other_route=temp_route, route_number=r_n_1):  # Check constraints
+                print('Constraints not met - next iteration')
+                continue
+            elif not self.check_constraints(new_route_2, r_n_2):
+                print('Constraints not met - next iteration')
+                continue
+            # if (temp_route['Total Distance (km)'][len(temp_route)-1] - self.previous_total_distance) > 20:
+            #     # If the new total distance is more than 20 km worse than previous, do not apply swap
+            #     # print("Current total distance more than 20 km worse than previous, do not apply swap")
+            #     # print(f"Distance difference: {(temp_route['Total Distance (km)'][len(temp_route)-1] - self.previous_total_distance)}")
+            #     continue
+            if temp_route['Total Distance (km)'][len(temp_route)-1] > self.previous_total_distance:
+                #print("Current total distance worse than previous, check tabu list")
+                # If current is worse than previous only apply swap if swap is not in the tabu_list
+                if self.swap_stores in self.tabu_list:  # Check if the stores to be swapped are in the Tabu list
+                    # print('Swap is in tabu list, do not apply')
+                    continue
+                self.swap_stores.reverse()
+                if self.swap_stores in self.tabu_list:  # And check the reverse order
+                    # print('Swap is in tabu list, do not apply')
+                    continue
+                # If the swap is applied (not in tabu) add 1 to the no improvement counter, otherwise reset counter
+                # print("Swap not in tabu list, apply and add to no improvement counter")
+                self.no_improvement_counter += 1
+                # print(f"No improvement counter is now: {self.no_improvement_counter}")
+            else:
+                # print("Improvement found, resetting counter")
+                self.no_improvement_counter = 0
+            if self.no_improvement_counter >= 100 or (time.perf_counter() - start_time) > 1000:
+                # Check exit condition for maximum number of swaps without improvement
+                print(f"No improvement count: {self.no_improvement_counter} or time limit exceeded")
+                break
+
+            # Applying the swap
+            # print('swap successful - adapting the route and adding swap to tabu list')
+            self.swap_stores.reverse()  # Back to original
+            self.route = temp_route.copy(deep=True)  # If constraints met, replace self.route with temp_route
+            if len(self.tabu_list) == 50:  # If tabu list is full, remove first (oldest) entry
+                self.tabu_list.pop(0)
+            self.tabu_list.append(self.swap_stores)  # Append latest swap
+            if self.route['Total Distance (km)'][len(self.route)-1] < self.best_distance:  # The total distance in route
+                print(f"New best total distance: {self.route['Total Distance (km)'][len(self.route)-1]}")
+                self.best_distance = self.route['Total Distance (km)'][len(self.route)-1]  # Save new best distance
+                self.best_solution = self.route.copy(deep=True)  # Save new best route
+            # Change variables
+            self.previous_total_distance = self.route['Total Distance (km)'][len(self.route)-1]
+        return self.best_distance, self.best_solution
 
 
 #%%
@@ -277,32 +307,13 @@ print(f"Total amount of days needed: {john.route_nr}")
 original_route = john.route.copy(deep=True)
 
 #%%
-temp_routee, route_1, route_2, route_number_1, route_number_2 = john.tabu_search()
+route_distance, route = john.tabu_search()
 
 #%%
+print(len(john.tabu_list))
+print(john.no_improvement_counter)
+print(route_distance)
 
-
-def constraints_temp(other_route, route_number):
-    current_route = other_route[other_route['Route Nr.'] == route_number]  # Subset of current route
-    print(current_route)
-    total_driving_time = current_route['Driving Time from Previous'].sum()  # In minutes
-    total_visit_times = current_route['Visit Time'].sum()
-    # TODO: self.max_worked_minutes
-    max_worked_minutes = 660
-    if (total_driving_time + total_visit_times) > max_worked_minutes:
-        return False
-    # # We skip the driving time from hq to first store, since this can be done before 9 am.
-    route_indexes = list(other_route.index.values)  # TODO: take the indexes from here
-
-
-    # TODO: finish this function then add to tabu_search
-
-
-    # time_after_visit = 540 + total_visit_times + total_driving_time - current_route['Driving Time from Previous'][1] - other_route['Driving Time from Previous'][len(other_route)-1]
-    # if time_after_visit > self.closing_time:
-    #     return False
-    # return True
-    return current_route
-
-
-temp = constraints_temp(temp_routee, route_number_1)
+#%%
+output = john.output_route(route)
+output.to_excel("Ex2.2-1274850.xls", index=False)  # Save as excel file

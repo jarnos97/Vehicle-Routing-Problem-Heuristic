@@ -42,7 +42,7 @@ class Vrp:
         total_driving_time = current_route['Driving Time from Previous'].sum()  # In minutes
         total_visit_times = current_route['Visit Time'].sum()
         current_store = current_route['City Nr.'][len(self.route)-1]
-        driving_time_back = round(self.dm[current_store][0] / 1.5, 0)  # TODO: changed this - added round
+        driving_time_back = round(self.dm[current_store][0] / 1.5, 0)
         minutes_worked = total_driving_time + total_visit_times + driving_time_back
         if minutes_worked > self.max_worked_minutes:
             return False
