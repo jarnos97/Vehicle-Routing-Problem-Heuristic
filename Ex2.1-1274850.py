@@ -21,12 +21,20 @@ class Vrp:
                                    'Total Distance (km)': [0]})
 
     def distance_matrix(self):
+        """
+        Function loops over all stores, calculates for each store the distance to every other store and saves the result
+        in a data frame.
+        """
         for i in self.data['City Nr.']:
             dist_list = [round(haversine((self.data['Lat'][i], self.data['Long'][i]),
                                          (self.data['Lat'][j], self.data['Long'][j])), 0) for j in self.data['City Nr.']]
             self.dm[i] = dist_list
 
     def add_visit_times(self):
+        """
+        Function loops over the data and for each store gathers the store visit time based on store type, the result is
+        added as a column to the data frame.
+        """
         visit_times = [30 if self.data['Type'][i] == 'Jumbo' else 20 for i in self.data['City Nr.']]
         visit_times[0] = np.nan
         self.data['Visit Time'] = visit_times
@@ -35,7 +43,8 @@ class Vrp:
         """
         We check two constraints. John cannot work more than 11 hours (660 minutes) and John should finish each visit
         before the closing time of the store (and after the opening time). It is assumed that John is always present at
-        the first store at 9 am (540 minutes after midnight).
+        the first store at 9 am (540 minutes after midnight). The functions' default is used for the initial route, the
+        user can also specify a specific route, this is used for tabu search and simulated annealing.
         :return: True/False
         """
         current_route = self.route[self.route['Route Nr.'] == self.route_nr]  # Subset of current route
@@ -55,6 +64,13 @@ class Vrp:
         return True
 
     def one_route(self):
+        """
+        The function uses the nearest neighbor insertion method to select new stores to append to the route. The closest
+        store (from previous) is temporarily added to the data frame, which is then checked to assess feasibility.
+        If the constraints are met, the new route is accepted, otherwise the route is restored to its previous state.
+        The function stops when no feasible route is found or if the final store was added to the route.
+        :return: True/False
+        """
         current_store = 0
         while True:
             dist = self.dm[current_store].copy(deep=True)  # Take distances of current store (column)
@@ -78,11 +94,10 @@ class Vrp:
                 return False
             shortest_distance = dist.min()
             closest_store = dist.idxmin()  # Returns index (store) of lowest distance
-            store_name = self.data['Name'][closest_store]  # Retrieve name of store from data frame
             total_route_distance = self.route['Total Distance in Route (km)'][len(self.route) - 1] + shortest_distance
             total_distance = self.route['Total Distance (km)'][len(self.route) - 1] + shortest_distance
             self.route = self.route.append({'Route Nr.': self.route_nr, 'City Nr.': closest_store,
-                                            'City Name': store_name,
+                                            'City Name': self.data['Name'][closest_store],
                                             'Total Distance in Route (km)': total_route_distance,
                                             'Visit Time': self.data['Visit Time'][closest_store],
                                             'Distance from Previous': shortest_distance,
@@ -111,6 +126,10 @@ class Vrp:
         return True
 
     def all_routes(self):
+        """
+        The function sequentially runs the one_route() method and adds routes to the data frame, the function terminates
+        when one_route() returns false.
+        """
         while True:
             if self.route_nr > 1:  # Start a new route by adding hq (unless it is the first route)
                 self.route = self.route.append({'Route Nr.': self.route_nr, 'City Nr.': 0,
@@ -124,15 +143,20 @@ class Vrp:
                 break
 
     def output_route(self):
+        """
+        Function drops unnecessary columns to obtain desired output.
+        :return: data frame
+        """
         output_df = self.route.copy(deep=True)
         output_df.drop(['Visit Time', 'Distance from Previous', 'Driving Time from Previous'], axis=1, inplace=True)
         return output_df
 
 
+# Create solution
 john = Vrp(data_frame=data)  # Initialize object
 john.distance_matrix()  # Create distance matrix
 john.add_visit_times()  # Add the visit times for each store to original data
 john.all_routes()  # Plan the routes
+print(f"Total amount of days needed: {john.route_nr}")
 output = john.output_route()
 output.to_excel("Ex2.1-1274850.xls", index=False)  # Save as excel file
-print(f"Total amount of days needed: {john.route_nr}")

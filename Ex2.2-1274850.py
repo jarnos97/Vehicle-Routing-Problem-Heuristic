@@ -1,7 +1,6 @@
 from haversine import haversine, Unit
 import numpy as np
 import pandas as pd
-import random
 import xlrd
 import xlwt
 import math
@@ -28,15 +27,22 @@ class Vrp:
         self.best_distance = math.inf  # So that the first new distance is always smaller
         self.no_improvement_counter = 0
         self.previous_total_distance = math.inf
-        # self.temp_route = pd.DataFrame()
 
     def distance_matrix(self):
+        """
+        Function loops over all stores, calculates for each store the distance to every other store and saves the result
+        in a data frame.
+        """
         for i in self.data['City Nr.']:
             dist_list = [round(haversine((self.data['Lat'][i], self.data['Long'][i]),
                                          (self.data['Lat'][j], self.data['Long'][j])), 0) for j in self.data['City Nr.']]
             self.dm[i] = dist_list
 
     def add_visit_times(self):
+        """
+        Function loops over the data and for each store gathers the store visit time based on store type, the result is
+        added as a column to the data frame.
+        """
         visit_times = [30 if self.data['Type'][i] == 'Jumbo' else 20 for i in self.data['City Nr.']]
         visit_times[0] = np.nan
         self.data['Visit Time'] = visit_times
@@ -45,7 +51,8 @@ class Vrp:
         """
         We check two constraints. John cannot work more than 11 hours (660 minutes) and John should finish each visit
         before the closing time of the store (and after the opening time). It is assumed that John is always present at
-        the first store at 9 am (540 minutes after midnight).
+        the first store at 9 am (540 minutes after midnight). The functions' default is used for the initial route, the
+        user can also specify a specific route, this is used for tabu search and simulated annealing.
         :return: True/False
         """
         if route_number:  # This is used for the tabu search
@@ -57,11 +64,11 @@ class Vrp:
             route_indexes = list(current_route.index.values)
             time_after_visit = 540 + total_visit_times + total_driving_time - \
                                current_route['Driving Time from Previous'][route_indexes[1]] - \
-                               current_route['Driving Time from Previous'][len(current_route)-1]  # Way back
+                               current_route['Driving Time from Previous'][route_indexes[len(route_indexes)-1]]
             if time_after_visit > self.closing_time:  # Constraint 2: visiting time
                 return False
             return True
-        else:
+        else:  # Used for the initial route
             current_route = self.route[self.route['Route Nr.'] == self.route_nr]  # Subset of current route
             total_driving_time = current_route['Driving Time from Previous'].sum()  # In minutes
             total_visit_times = current_route['Visit Time'].sum()
@@ -78,6 +85,13 @@ class Vrp:
             return True
 
     def one_route(self):
+        """
+        The function uses the nearest neighbor insertion method to select new stores to append to the route. The closest
+        store (from previous) is temporarily added to the data frame, which is then checked to assess feasibility.
+        If the constraints are met, the new route is accepted, otherwise the route is restored to its previous state.
+        The function stops when no feasible route is found or if the final store was added to the route.
+        :return: True/False
+        """
         current_store = 0
         while True:
             dist = self.dm[current_store].copy(deep=True)  # Take distances of current store (column)
@@ -133,6 +147,10 @@ class Vrp:
         return True
 
     def all_routes(self):
+        """
+        The function sequentially runs the one_route() method and adds routes to the data frame, the function terminates
+        when one_route() returns false.
+        """
         while True:
             if self.route_nr > 1:  # Start a new route by adding hq (unless it is the first route)
                 self.route = self.route.append({'Route Nr.': self.route_nr, 'City Nr.': 0,
@@ -146,6 +164,11 @@ class Vrp:
                 break
 
     def output_route(self, manual_route=None):
+        """
+        Function drops unnecessary columns to obtain desired output.
+        :param manual_route:
+        :return: data frame
+        """
         if manual_route is not None:
             output_df = manual_route.copy(deep=True)
         else:
@@ -155,14 +178,13 @@ class Vrp:
 
     def swap(self, temp_route):
         """
-        Selects two random stores and swaps them
+        Function randomly select two stores and swaps them.
         """
-        self.swap_stores = list(np.random.choice(range(1, 134), 2, replace=False))  # Includes the last number
-        # Extract the stores and their indexes
+        self.swap_stores = list(np.random.choice(range(1, 134), 2, replace=False))  # Select stores to swap
         s1_index = temp_route.index[temp_route['City Nr.'] == self.swap_stores[0]][0]  # Index of store 1
         s2_index = temp_route.index[temp_route['City Nr.'] == self.swap_stores[1]][0]  # Index of store 2
-        s1 = pd.DataFrame(dict(temp_route.iloc[s1_index]), index=[s2_index])  # Create dataframe of store with opposite index
-        s2 = pd.DataFrame(dict(temp_route.iloc[s2_index]), index=[s1_index])
+        s1 = pd.DataFrame(dict(temp_route.iloc[s1_index]), index=[s2_index])  # Create dataframe of store
+        s2 = pd.DataFrame(dict(temp_route.iloc[s2_index]), index=[s1_index])  # Use opposite index
         s1_route_nr = int(s1['Route Nr.'])  # We switch the route number so its easier to slice the data later
         s2_route_nr = int(s2['Route Nr.'])
         s1['Route Nr.'] = s2_route_nr
@@ -176,10 +198,9 @@ class Vrp:
 
     def update_route_part(self, temp_route, route_nr_1, s1_index):
         """
-        Takes the adapted route, from swap() and updates the distances in the altered route numbers.x
-        xx
-        This approach is not very elegant in code (many lines), yet is computationally much more efficient than looping
-        over the data frame and updating it.
+        Function Takes the adapted route, from swap() and updates the distances and travel times in the altered route
+        numbers. This approach is not very elegant in code (many lines), yet is computationally much more efficient than
+        looping over the data frame and updating it.
         """
         route_index_range = temp_route.index[temp_route['Route Nr.'] == route_nr_1]  # All indexes of store 1
         r1_begin, r1_end = s1_index, route_index_range[len(route_index_range) - 1]  # Alter these indexes
@@ -212,14 +233,19 @@ class Vrp:
 
     @staticmethod
     def update_route(temp_route, new_route_1, new_route_2, index_range_1, index_range_2):
+        """
+        Function takes the temporary route and the two new routes created by update_route_part() and their indexes and
+        replaces the stores in the temporary route with the new ones.
+        :param temp_route: new_route_1: new_route_2: index_range_1: index_range_2:
+        :return: data frame
+        """
         if new_route_1['Route Nr.'].iloc[0] != new_route_2['Route Nr.'].iloc[0]:  # If within route swap dont drop again
             temp_route.drop(index_range_2, axis=0, inplace=True)
             temp_route = temp_route.append(new_route_2, ignore_index=False)
         temp_route.drop(index_range_1, axis=0, inplace=True)  # Drop the old rows from the route
         temp_route = temp_route.append(new_route_1, ignore_index=False)  # Append new rows
         temp_route.sort_index(inplace=True)  # Place rows at correct index
-        # Update the total distance for the whole route
-        previous_distances = temp_route['Distance from Previous'].to_list()
+        previous_distances = temp_route['Distance from Previous'].to_list()  # Update the total distance for route
         total_distances = []
         total = 0
         for i in previous_distances:
@@ -228,92 +254,65 @@ class Vrp:
         temp_route['Total Distance (km)'] = total_distances
         return temp_route
 
-    def tabu_search(self):  # Eventually take out manual_route
+    def tabu_search(self):
         """
+        The function applies a swap of two stores and updates the route. It then checks the feasibility of the new
+        temporary route. If the total distance in the temporary route is less than 20 km worse than the previous and
+        the swap is not yet is the tabu-list, it is accepted. Swaps that lead to improvement are always accepted. The
+        function keeps track of the best solution and terminates after a given time limit or if there is no improvement
+        for 100 steps.
         Note: I implemented the extra condition that a swap is not applied if the total distance is more than 20 km
         worse than the previous total distance (as mentioned in the discussion).
         """
-        # Initialize variables
         start_time = time.perf_counter()
         self.dm = pd.DataFrame()  # Distance matrix
-        self.distance_matrix()  # Re-initiate the distance matrix
-
-        while True:
-            print(f"No improvement counter: {self.no_improvement_counter}")
-
+        self.distance_matrix()  # Re-initialize the distance matrix
+        while (time.perf_counter() - start_time) < 1000:
             # Apply swap and update route
             temp_route = self.route.copy(deep=True)  # Makes copy of current route object
             temp_route, r_n_1, r_n_2, idx_1, idx_2 = self.swap(temp_route)  # Perform one swap
             new_route_1, index_range_1 = self.update_route_part(temp_route, r_n_1, idx_1)  # Update route one and two
             new_route_2, index_range_2 = self.update_route_part(temp_route, r_n_2, idx_2)
             temp_route = self.update_route(temp_route, new_route_1, new_route_2, index_range_1, index_range_2)
-
             # Checking the requirements for a swap: constraints, improvement, tabu_list, no improvement counter
             if not self.check_constraints(other_route=temp_route, route_number=r_n_1):  # Check constraints
-                print('Constraints not met - next iteration')
                 continue
             elif not self.check_constraints(new_route_2, r_n_2):
-                print('Constraints not met - next iteration')
                 continue
-            # if (temp_route['Total Distance (km)'][len(temp_route)-1] - self.previous_total_distance) > 20:
-            #     # If the new total distance is more than 20 km worse than previous, do not apply swap
-            #     # print("Current total distance more than 20 km worse than previous, do not apply swap")
-            #     # print(f"Distance difference: {(temp_route['Total Distance (km)'][len(temp_route)-1] - self.previous_total_distance)}")
-            #     continue
+            if (temp_route['Total Distance (km)'][len(temp_route)-1] - self.previous_total_distance) > 20:
+                continue
             if temp_route['Total Distance (km)'][len(temp_route)-1] > self.previous_total_distance:
-                #print("Current total distance worse than previous, check tabu list")
-                # If current is worse than previous only apply swap if swap is not in the tabu_list
                 if self.swap_stores in self.tabu_list:  # Check if the stores to be swapped are in the Tabu list
-                    # print('Swap is in tabu list, do not apply')
                     continue
                 self.swap_stores.reverse()
                 if self.swap_stores in self.tabu_list:  # And check the reverse order
-                    # print('Swap is in tabu list, do not apply')
                     continue
-                # If the swap is applied (not in tabu) add 1 to the no improvement counter, otherwise reset counter
-                # print("Swap not in tabu list, apply and add to no improvement counter")
                 self.no_improvement_counter += 1
-                # print(f"No improvement counter is now: {self.no_improvement_counter}")
             else:
-                # print("Improvement found, resetting counter")
                 self.no_improvement_counter = 0
-            if self.no_improvement_counter >= 100 or (time.perf_counter() - start_time) > 1000:
-                # Check exit condition for maximum number of swaps without improvement
-                print(f"No improvement count: {self.no_improvement_counter} or time limit exceeded")
+            if self.no_improvement_counter >= 100:  # check second exit condition
                 break
-
-            # Applying the swap
-            # print('swap successful - adapting the route and adding swap to tabu list')
+            # Accepting swap as new route
             self.swap_stores.reverse()  # Back to original
             self.route = temp_route.copy(deep=True)  # If constraints met, replace self.route with temp_route
             if len(self.tabu_list) == 50:  # If tabu list is full, remove first (oldest) entry
                 self.tabu_list.pop(0)
             self.tabu_list.append(self.swap_stores)  # Append latest swap
             if self.route['Total Distance (km)'][len(self.route)-1] < self.best_distance:  # The total distance in route
-                print(f"New best total distance: {self.route['Total Distance (km)'][len(self.route)-1]}")
                 self.best_distance = self.route['Total Distance (km)'][len(self.route)-1]  # Save new best distance
                 self.best_solution = self.route.copy(deep=True)  # Save new best route
-            # Change variables
-            self.previous_total_distance = self.route['Total Distance (km)'][len(self.route)-1]
+            self.previous_total_distance = self.route['Total Distance (km)'][len(self.route)-1]  # Update variable
         return self.best_distance, self.best_solution
 
 
-#%%
+# Creating initial route
 john = Vrp(data_frame=data)  # Initialize object
 john.distance_matrix()  # Create distance matrix
 john.add_visit_times()  # Add the visit times for each store to original data
 john.all_routes()  # Plan the routes
-print(f"Total amount of days needed: {john.route_nr}")
-original_route = john.route.copy(deep=True)
 
-#%%
+# Tabu-search
 route_distance, route = john.tabu_search()
-
-#%%
-print(len(john.tabu_list))
-print(john.no_improvement_counter)
 print(route_distance)
-
-#%%
 output = john.output_route(route)
 output.to_excel("Ex2.2-1274850.xls", index=False)  # Save as excel file
